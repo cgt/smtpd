@@ -184,6 +184,41 @@ func (s *session) Addr() net.Addr {
 	return s.rwc.RemoteAddr()
 }
 
+// pregreetCheck checks whether the client speaks before the full 220 greeting
+// has been sent.
+func (s *session) pregreetCheck() (line string) {
+	s.sendlinef("220-Wait")
+
+	wait := time.Tick(5000 * time.Millisecond)
+	var (
+		buf  []byte
+		stop = false
+	)
+	for !stop {
+		select {
+		case <-wait:
+			stop = true
+		default:
+			s.rwc.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+			b, err := s.br.ReadByte()
+			if err != nil {
+				continue
+			}
+			buf = append(buf, b)
+			if b == '\n' {
+				stop = true
+			}
+		}
+	}
+
+	if len(buf) != 0 {
+		line := string(buf)
+		log.Printf("Client pregreeted with %#v", line)
+		return line
+	}
+	return ""
+}
+
 func (s *session) serve() {
 	defer s.rwc.Close()
 	if onc := s.srv.OnNewConnection; onc != nil {
@@ -192,17 +227,28 @@ func (s *session) serve() {
 			return
 		}
 	}
+
+	preline := s.pregreetCheck()
+
 	s.sendf("220 %s ESMTP gosmtpd\r\n", s.srv.hostname())
 	for {
-		if s.srv.ReadTimeout != 0 {
-			s.rwc.SetReadDeadline(time.Now().Add(s.srv.ReadTimeout))
+		var line cmdLine
+		if preline == "" {
+			if s.srv.ReadTimeout == 0 {
+				s.rwc.SetReadDeadline(time.Time{})
+			} else {
+				s.rwc.SetReadDeadline(time.Now().Add(s.srv.ReadTimeout))
+			}
+			sl, err := s.br.ReadSlice('\n')
+			if err != nil {
+				s.errorf("read error: %v", err)
+				return
+			}
+			line = cmdLine(string(sl))
+		} else {
+			line = cmdLine(preline)
+			preline = ""
 		}
-		sl, err := s.br.ReadSlice('\n')
-		if err != nil {
-			s.errorf("read error: %v", err)
-			return
-		}
-		line := cmdLine(string(sl))
 		if err := line.checkValid(); err != nil {
 			s.sendlinef("500 %v", err)
 			continue
