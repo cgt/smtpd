@@ -1,6 +1,4 @@
-// Package smtpd implements an SMTP server. Hooks are provided to customize
-// its behavior.
-package smtpd
+package spamrake
 
 // TODO:
 //  -- send 421 to connected clients on graceful server shutdown (s3.8)
