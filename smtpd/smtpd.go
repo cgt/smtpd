@@ -1,12 +1,9 @@
-package spamrake
-
-// TODO:
-//  -- send 421 to connected clients on graceful server shutdown (s3.8)
-//
+package smtpd
 
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -14,6 +11,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 )
@@ -90,6 +88,7 @@ func (srv *Server) hostname() string {
 	if srv.Hostname != "" {
 		return srv.Hostname
 	}
+	// TODO: os.Hostname()
 	out, err := exec.Command("hostname").Output()
 	if err != nil {
 		return ""
@@ -100,36 +99,58 @@ func (srv *Server) hostname() string {
 // ListenAndServe listens on the TCP network address srv.Addr and then
 // calls Serve to handle requests on incoming connections.  If
 // srv.Addr is blank, ":25" is used.
-func (srv *Server) ListenAndServe() error {
+func (srv *Server) ListenAndServe(ctx context.Context) error {
+	ln, err := srv.Listen()
+	if err != nil {
+		return err
+	}
+	return srv.Serve(ctx, ln)
+}
+
+func (srv *Server) Listen() (net.Listener, error) {
 	addr := srv.Addr
 	if addr == "" {
 		addr = ":25"
 	}
-	ln, e := net.Listen("tcp", addr)
-	if e != nil {
-		return e
-	}
-	return srv.Serve(ln)
+	return net.Listen("tcp", addr)
 }
 
-func (srv *Server) Serve(ln net.Listener) error {
+func (srv *Server) Serve(ctx context.Context, ln net.Listener) error {
 	defer ln.Close()
-	for {
-		rw, e := ln.Accept()
-		if e != nil {
-			if ne, ok := e.(net.Error); ok && ne.Temporary() {
-				log.Printf("smtpd: Accept error: %v", e)
-				continue
+	conns := make(chan net.Conn)
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				if ne, ok := err.(net.Error); ok && ne.Temporary() {
+					log.Printf("smtpd: Accept error: %v", err)
+					continue
+				}
+				log.Printf("smtpd: Fatal accept error: %v", err)
+				break
 			}
-			return e
+			conns <- c
 		}
-		sess, err := srv.newSession(rw)
-		if err != nil {
-			continue
+	}()
+
+	var (
+		wg   sync.WaitGroup
+		stop = false
+	)
+	for !stop {
+		select {
+		case <-ctx.Done():
+			stop = true
+		case c := <-conns:
+			wg.Add(1)
+			go func() {
+				srv.newSession(c).serve(ctx)
+				wg.Done()
+			}()
 		}
-		go sess.serve()
 	}
-	panic("not reached")
+	wg.Wait()
+	return nil
 }
 
 type session struct {
@@ -144,14 +165,13 @@ type session struct {
 	helloHost string
 }
 
-func (srv *Server) newSession(rwc net.Conn) (s *session, err error) {
-	s = &session{
+func (srv *Server) newSession(rwc net.Conn) *session {
+	return &session{
 		srv: srv,
 		rwc: rwc,
 		br:  bufio.NewReader(rwc),
 		bw:  bufio.NewWriter(rwc),
 	}
-	return
 }
 
 func (s *session) errorf(format string, args ...interface{}) {
@@ -217,7 +237,7 @@ func (s *session) pregreetCheck() (line string) {
 	return ""
 }
 
-func (s *session) serve() {
+func (s *session) serve(ctx context.Context) {
 	defer s.rwc.Close()
 	if onc := s.srv.OnNewConnection; onc != nil {
 		if err := onc(s); err != nil {
@@ -230,6 +250,13 @@ func (s *session) serve() {
 
 	s.sendf("220 %s ESMTP gosmtpd\r\n", s.srv.hostname())
 	for {
+		select {
+		case <-ctx.Done():
+			s.sendlinef("421 Server shutting down")
+			return
+		default:
+		}
+
 		var line cmdLine
 		if preline == "" {
 			if s.srv.ReadTimeout == 0 {
@@ -239,6 +266,9 @@ func (s *session) serve() {
 			}
 			sl, err := s.br.ReadSlice('\n')
 			if err != nil {
+				if ne, ok := err.(net.Error); ok && ne.Timeout() {
+					continue
+				}
 				s.errorf("read error: %v", err)
 				return
 			}
