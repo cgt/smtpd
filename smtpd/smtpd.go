@@ -286,8 +286,10 @@ func (s *session) serve(ctx context.Context) {
 		}
 
 		switch line.Verb() {
-		case "HELO", "EHLO":
-			s.handleHello(line.Verb(), line.Arg())
+		case "HELO":
+			s.handleHELO(line.Arg())
+		case "EHLO":
+			s.handleEHLO(line.Arg())
 		case "QUIT":
 			s.sendlinef("221 2.0.0 Bye")
 			return
@@ -316,8 +318,14 @@ func (s *session) serve(ctx context.Context) {
 	}
 }
 
-func (s *session) handleHello(greeting, host string) {
-	s.helloType = greeting
+func (s *session) handleHELO(host string) {
+	s.helloType = "HELO"
+	s.helloHost = host
+	s.sendlinef("250 %s", s.srv.hostname())
+}
+
+func (s *session) handleEHLO(host string) {
+	s.helloType = "EHLO"
 	s.helloHost = host
 	fmt.Fprintf(s.bw, "250-%s\r\n", s.srv.hostname())
 	extensions := []string{}
