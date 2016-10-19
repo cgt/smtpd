@@ -24,10 +24,11 @@ var (
 
 // Server is an SMTP server.
 type Server struct {
-	Addr         string        // TCP address to listen on, ":25" if empty
-	Hostname     string        // optional Hostname to announce; "" to use system hostname
-	ReadTimeout  time.Duration // optional read timeout
-	WriteTimeout time.Duration // optional write timeout
+	Addr          string        // TCP address to listen on, ":25" if empty
+	Hostname      string        // optional Hostname to announce; "" to use system hostname
+	ReadTimeout   time.Duration // optional read timeout
+	WriteTimeout  time.Duration // optional write timeout
+	PregreetDelay time.Duration
 
 	PlainAuth bool // advertise plain auth (assumes you're on SSL)
 
@@ -206,7 +207,7 @@ func (s *session) Addr() net.Addr {
 func (s *session) pregreetCheck() (line string) {
 	s.sendlinef("220-Wait")
 
-	wait := time.Tick(5000 * time.Millisecond)
+	wait := time.Tick(s.srv.PregreetDelay)
 	var (
 		buf  []byte
 		stop = false
@@ -245,7 +246,10 @@ func (s *session) serve(ctx context.Context) {
 		}
 	}
 
-	preline := s.pregreetCheck()
+	var preline string
+	if s.srv.PregreetDelay != 0 {
+		preline = s.pregreetCheck()
+	}
 
 	s.sendf("220 %s ESMTP gosmtpd\r\n", s.srv.hostname())
 	for {
