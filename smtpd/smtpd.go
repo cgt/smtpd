@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"os/exec"
+	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -88,12 +88,11 @@ func (srv *Server) hostname() string {
 	if srv.Hostname != "" {
 		return srv.Hostname
 	}
-	// TODO: os.Hostname()
-	out, err := exec.Command("hostname").Output()
+	hostname, err := os.Hostname()
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(out))
+	return hostname
 }
 
 // ListenAndServe listens on the TCP network address srv.Addr and then
