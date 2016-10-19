@@ -251,7 +251,7 @@ func (s *session) serve(ctx context.Context) {
 		preline = s.pregreetCheck()
 	}
 
-	s.sendf("220 %s ESMTP gosmtpd\r\n", s.srv.hostname())
+	s.sendlinef("220 %s ESMTP", s.srv.hostname())
 	for {
 		select {
 		case <-ctx.Done():
