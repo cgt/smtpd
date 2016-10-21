@@ -36,53 +36,17 @@ type Server struct {
 	// If it returns non-nil, the connection is closed.
 	OnNewConnection func(c Connection) error
 
-	// OnNewMail must be defined and is called when a new message beings.
-	// (when a MAIL FROM line arrives)
-	OnNewMail func(c Connection, from MailAddress) (Envelope, error)
-}
+	OnMailFrom func(c Connection, from MailAddress) error
 
-// MailAddress is defined by
-type MailAddress interface {
-	Email() string    // email address, as provided
-	Hostname() string // canonical hostname, lowercase
+	OnRcptTo func(c Connection, rcpt MailAddress) error
+
+	Deliver func(env *Envelope) error
 }
 
 // Connection is implemented by the SMTP library and provided to callers
 // customizing their own Servers.
 type Connection interface {
 	Addr() net.Addr
-}
-
-type Envelope interface {
-	AddRecipient(rcpt MailAddress) error
-	BeginData() error
-	Write(line []byte) error
-	Close() error
-}
-
-type BasicEnvelope struct {
-	rcpts []MailAddress
-}
-
-func (e *BasicEnvelope) AddRecipient(rcpt MailAddress) error {
-	e.rcpts = append(e.rcpts, rcpt)
-	return nil
-}
-
-func (e *BasicEnvelope) BeginData() error {
-	if len(e.rcpts) == 0 {
-		return SMTPError("554 5.5.1 Error: no valid recipients")
-	}
-	return nil
-}
-
-func (e *BasicEnvelope) Write(line []byte) error {
-	log.Printf("Line: %q", string(line))
-	return nil
-}
-
-func (e *BasicEnvelope) Close() error {
-	return nil
 }
 
 func (srv *Server) hostname() string {
@@ -153,24 +117,35 @@ func (srv *Server) Serve(ctx context.Context, ln net.Listener) error {
 	return nil
 }
 
+// TODO: flags on client (e.g., pregreeted)
+
+type Client struct {
+	HeloType string
+	HeloHost string
+	addr     net.Addr
+}
+
+func (c Client) Addr() net.Addr {
+	return c.addr
+}
+
 type session struct {
 	srv *Server
 	rwc net.Conn
 	br  *bufio.Reader
 	bw  *bufio.Writer
 
-	env Envelope // current envelope, or nil
-
-	helloType string
-	helloHost string
+	client Client
+	env    *Envelope // current envelope, or nil
 }
 
 func (srv *Server) newSession(rwc net.Conn) *session {
 	return &session{
-		srv: srv,
-		rwc: rwc,
-		br:  bufio.NewReader(rwc),
-		bw:  bufio.NewWriter(rwc),
+		srv:    srv,
+		rwc:    rwc,
+		br:     bufio.NewReader(rwc),
+		bw:     bufio.NewWriter(rwc),
+		client: Client{addr: rwc.RemoteAddr()},
 	}
 }
 
@@ -319,14 +294,14 @@ func (s *session) serve(ctx context.Context) {
 }
 
 func (s *session) handleHELO(host string) {
-	s.helloType = "HELO"
-	s.helloHost = host
+	s.client.HeloType = "HELO"
+	s.client.HeloHost = host
 	s.sendlinef("250 %s", s.srv.hostname())
 }
 
 func (s *session) handleEHLO(host string) {
-	s.helloType = "EHLO"
-	s.helloHost = host
+	s.client.HeloType = "EHLO"
+	s.client.HeloHost = host
 	fmt.Fprintf(s.bw, "250-%s\r\n", s.srv.hostname())
 	extensions := []string{}
 	if s.srv.PlainAuth {
@@ -346,7 +321,7 @@ func (s *session) handleEHLO(host string) {
 func (s *session) handleMailFrom(email string) {
 	// TODO: 4.1.1.11.  If the server SMTP does not recognize or
 	// cannot implement one or more of the parameters associated
-	// qwith a particular MAIL FROM or RCPT TO command, it will return
+	// with a particular MAIL FROM or RCPT TO command, it will return
 	// code 555.
 
 	if s.env != nil {
@@ -354,31 +329,26 @@ func (s *session) handleMailFrom(email string) {
 		return
 	}
 	log.Printf("mail from: %q", email)
-	cb := s.srv.OnNewMail
-	if cb == nil {
-		log.Printf("smtp: Server.OnNewMail is nil; rejecting MAIL FROM")
-		s.sendf("451 Server.OnNewMail not configured\r\n")
-		return
-	}
-	s.env = nil
-	env, err := cb(s, addrString(email))
-	if err != nil {
+
+	cb := s.srv.OnMailFrom
+	if err := cb(s, MailAddress(email)); err != nil {
 		log.Printf("rejecting MAIL FROM %q: %v", email, err)
-		s.sendf("451 denied\r\n")
+		s.sendf("451 denied\r\n") // TODO: temp or perm err? configurable?
 
 		s.bw.Flush()
 		time.Sleep(100 * time.Millisecond)
 		s.rwc.Close()
 		return
 	}
-	s.env = env
+
+	s.env = &Envelope{Sender: MailAddress(email), Client: s.client}
 	s.sendlinef("250 2.1.0 Ok")
 }
 
 func (s *session) handleRcpt(line cmdLine) {
 	// TODO: 4.1.1.11.  If the server SMTP does not recognize or
 	// cannot implement one or more of the parameters associated
-	// qwith a particular MAIL FROM or RCPT TO command, it will return
+	// with a particular MAIL FROM or RCPT TO command, it will return
 	// code 555.
 
 	if s.env == nil {
@@ -392,24 +362,30 @@ func (s *session) handleRcpt(line cmdLine) {
 		s.sendlinef("501 5.1.7 Bad sender address syntax")
 		return
 	}
-	err := s.env.AddRecipient(addrString(m[1]))
-	if err != nil {
-		s.sendSMTPErrorOrLinef(err, "550 bad recipient")
-		return
+	rcpt := MailAddress(m[1])
+
+	cb := s.srv.OnRcptTo
+	if cb != nil {
+		if err := cb(s, rcpt); err != nil {
+			log.Printf("smtpd: rejected rcpt %s: %v", rcpt.Email(), err)
+			s.sendlinef("550 5.7.1 unacceptable recipient")
+			return
+		}
 	}
+	s.env.AddRecipient(rcpt)
 	s.sendlinef("250 2.1.0 Ok")
 }
+
+// TODO: deliver, add received line
 
 func (s *session) handleData() {
 	if s.env == nil {
 		s.sendlinef("503 5.5.1 Error: need RCPT command")
 		return
 	}
-	if err := s.env.BeginData(); err != nil {
-		s.handleError(err)
-		return
-	}
 	s.sendlinef("354 Go ahead")
+
+	var buf []byte
 	for {
 		sl, err := s.br.ReadSlice('\n')
 		if err != nil {
@@ -422,17 +398,17 @@ func (s *session) handleData() {
 		if sl[0] == '.' {
 			sl = sl[1:]
 		}
-		err = s.env.Write(sl)
-		if err != nil {
-			s.sendSMTPErrorOrLinef(err, "550 ??? failed")
-			return
-		}
+		buf = append(buf, sl...)
 	}
-	if err := s.env.Close(); err != nil {
-		s.handleError(err)
-		return
+	s.env.Data = buf
+
+	err := s.srv.Deliver(s.env)
+	if err != nil {
+		// TODO: perm or temp err?
+		s.sendlinef("450 5.7.1 Service unavailable")
+	} else {
+		s.sendlinef("250 2.0.0 Ok: queued")
 	}
-	s.sendlinef("250 2.0.0 Ok: queued")
 	s.env = nil
 }
 
@@ -443,20 +419,6 @@ func (s *session) handleError(err error) {
 	}
 	log.Printf("Error: %s", err)
 	s.env = nil
-}
-
-type addrString string
-
-func (a addrString) Email() string {
-	return string(a)
-}
-
-func (a addrString) Hostname() string {
-	e := string(a)
-	if idx := strings.Index(e, "@"); idx != -1 {
-		return strings.ToLower(e[idx+1:])
-	}
-	return ""
 }
 
 type cmdLine string
