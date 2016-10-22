@@ -3,37 +3,36 @@ package smtpd
 import (
 	"context"
 	"errors"
+	"io/ioutil"
+	"log"
 	"net/smtp"
 	"net/textproto"
-	"sync"
 	"testing"
 	"time"
 )
 
 func TestHELO(t *testing.T) {
+	logger := log.New(ioutil.Discard, "", 0)
 	serverHostname := "server.invalid"
 	s := Server{
 		Addr:        "127.0.0.1:0",
 		Hostname:    serverHostname,
 		ReadTimeout: 2 * time.Second,
+		Log:         logger,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-
-	var wg sync.WaitGroup
 
 	ln, err := s.Listen()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Logf("listening on %s", ln.Addr())
-	wg.Add(1)
 	go func() {
 		err = s.Serve(ctx, ln)
 		if err != nil {
 			t.Fatal(err)
 		}
-		wg.Done()
 	}()
 
 	c, err := textproto.Dial("tcp", ln.Addr().String())
@@ -61,10 +60,10 @@ func TestHELO(t *testing.T) {
 		t.Fatalf("unexpected HELO reply: code:%d msg:%s", code, msg)
 	}
 	cancel()
-	wg.Wait()
 }
 
 func TestRejectRecipient(t *testing.T) {
+	logger := log.New(ioutil.Discard, "", 0)
 	serverHostname := "server.invalid"
 	s := Server{
 		Addr:     "127.0.0.1:0",
@@ -75,6 +74,7 @@ func TestRejectRecipient(t *testing.T) {
 		OnRcptTo: func(c Connection, rcpt MailAddress) error {
 			return errors.New("don't want mail for this address")
 		},
+		Log: logger,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
