@@ -358,14 +358,16 @@ func (s *session) handleMailFrom(email string) {
 	s.srv.Logf("mail from: %q", email)
 
 	cb := s.srv.OnMailFrom
-	if err := cb(s, MailAddress(email)); err != nil {
-		s.srv.Logf("rejecting MAIL FROM %q: %v", email, err)
-		s.sendf("451 denied\r\n") // TODO: temp or perm err? configurable?
+	if cb != nil {
+		if err := cb(s, MailAddress(email)); err != nil {
+			s.srv.Logf("rejecting MAIL FROM %q: %v", email, err)
+			s.sendf("451 denied\r\n") // TODO: temp or perm err? configurable?
 
-		s.bw.Flush()
-		time.Sleep(100 * time.Millisecond)
-		s.rwc.Close()
-		return
+			s.bw.Flush()
+			time.Sleep(100 * time.Millisecond)
+			s.rwc.Close()
+			return
+		}
 	}
 
 	s.env = &Envelope{Sender: MailAddress(email), Client: s.client}
