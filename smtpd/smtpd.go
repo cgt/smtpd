@@ -24,22 +24,34 @@ var (
 
 // Server is an SMTP server.
 type Server struct {
-	Addr          string        // TCP address to listen on, ":25" if empty
-	Hostname      string        // optional Hostname to announce; "" to use system hostname
-	ReadTimeout   time.Duration // optional read timeout
-	WriteTimeout  time.Duration // optional write timeout
+	Addr         string        // TCP address to listen on, ":25" if empty
+	Hostname     string        // optional Hostname to announce; "" to use system hostname
+	ReadTimeout  time.Duration // optional read timeout
+	WriteTimeout time.Duration // optional write timeout
+
+	// PregreetDelay is the amount of time to wait after sending the initial
+	// "220-" line before sending the final "220 " line.
 	PregreetDelay time.Duration
 
 	// OnNewConnection, if non-nil, is called on new connections.
 	// If it returns non-nil, the connection is closed.
 	OnNewConnection func(c Connection) error
 
+	// OnMailFrom, if non-nil, is called on MAIL FROM.
+	// If it returns non-nil, the MAIL FROM is rejected.
 	OnMailFrom func(c Connection, from MailAddress) error
 
+	// OnRcptTo, if non-nil, is called on RCPT TO.
+	// If it returns non-nil, the recipient is not rejected and not added
+	// to the Envelope.
 	OnRcptTo func(c Connection, rcpt MailAddress) error
 
+	// Deliver is called when DATA is finished and the mail is ready to be
+	// accepted. If it returns non-nil, the mail is rejected.
 	Deliver func(env *Envelope) error
 
+	// Log is used for logging within the Server.
+	// If nil, logging is disabled.
 	Log *log.Logger
 }
 
@@ -87,10 +99,10 @@ func (srv *Server) Serve(ctx context.Context, ln net.Listener) error {
 			c, err := ln.Accept()
 			if err != nil {
 				if ne, ok := err.(net.Error); ok && ne.Temporary() {
-					srv.Log.Printf("smtpd: Accept error: %v", err)
+					srv.Logf("smtpd: Accept error: %v", err)
 					continue
 				}
-				srv.Log.Printf("smtpd: Fatal accept error: %v", err)
+				srv.Logf("smtpd: Fatal accept error: %v", err)
 				break
 			}
 			conns <- c
@@ -115,6 +127,12 @@ func (srv *Server) Serve(ctx context.Context, ln net.Listener) error {
 	}
 	wg.Wait()
 	return nil
+}
+
+func (srv *Server) Logf(format string, v ...interface{}) {
+	if srv.Log != nil {
+		srv.Logf(format, v)
+	}
 }
 
 // TODO: flags on client (e.g., pregreeted)
@@ -150,7 +168,7 @@ func (srv *Server) newSession(rwc net.Conn) *session {
 }
 
 func (s *session) errorf(format string, args ...interface{}) {
-	s.srv.Log.Printf("Client error: "+format, args...)
+	s.srv.Logf("Client error: "+format, args...)
 }
 
 func (s *session) sendf(format string, args ...interface{}) {
@@ -206,7 +224,7 @@ func (s *session) pregreetCheck() (line string) {
 
 	if len(buf) != 0 {
 		line := string(buf)
-		s.srv.Log.Printf("Client pregreeted with %#v", line)
+		s.srv.Logf("Client pregreeted with %#v", line)
 		return line
 	}
 	return ""
@@ -277,7 +295,7 @@ func (s *session) serve(ctx context.Context) {
 			arg := line.Arg() // "From:<foo@bar.com>"
 			m := mailFromRE.FindStringSubmatch(arg)
 			if m == nil {
-				s.srv.Log.Printf("invalid MAIL arg: %q", arg)
+				s.srv.Logf("invalid MAIL arg: %q", arg)
 				s.sendlinef("501 5.1.7 Bad sender address syntax")
 				continue
 			}
@@ -287,7 +305,7 @@ func (s *session) serve(ctx context.Context) {
 		case "DATA":
 			s.handleData()
 		default:
-			s.srv.Log.Printf("Client: %q, verhb: %q", line, line.Verb())
+			s.srv.Logf("Client: %q, verhb: %q", line, line.Verb())
 			s.sendlinef("502 5.5.2 Error: command not recognized")
 		}
 	}
@@ -325,11 +343,11 @@ func (s *session) handleMailFrom(email string) {
 		s.sendlinef("503 5.5.1 Error: nested MAIL command")
 		return
 	}
-	s.srv.Log.Printf("mail from: %q", email)
+	s.srv.Logf("mail from: %q", email)
 
 	cb := s.srv.OnMailFrom
 	if err := cb(s, MailAddress(email)); err != nil {
-		s.srv.Log.Printf("rejecting MAIL FROM %q: %v", email, err)
+		s.srv.Logf("rejecting MAIL FROM %q: %v", email, err)
 		s.sendf("451 denied\r\n") // TODO: temp or perm err? configurable?
 
 		s.bw.Flush()
@@ -355,7 +373,7 @@ func (s *session) handleRcpt(line cmdLine) {
 	arg := line.Arg() // "To:<foo@bar.com>"
 	m := rcptToRE.FindStringSubmatch(arg)
 	if m == nil {
-		s.srv.Log.Printf("bad RCPT address: %q", arg)
+		s.srv.Logf("bad RCPT address: %q", arg)
 		s.sendlinef("501 5.1.7 Bad sender address syntax")
 		return
 	}
@@ -364,7 +382,7 @@ func (s *session) handleRcpt(line cmdLine) {
 	cb := s.srv.OnRcptTo
 	if cb != nil {
 		if err := cb(s, rcpt); err != nil {
-			s.srv.Log.Printf("smtpd: rejected rcpt %s: %v", rcpt.Email(), err)
+			s.srv.Logf("smtpd: rejected rcpt %s: %v", rcpt.Email(), err)
 			s.sendlinef("550 5.7.1 unacceptable recipient")
 			return
 		}
@@ -414,7 +432,7 @@ func (s *session) handleError(err error) {
 		s.sendlinef("%s", se)
 		return
 	}
-	s.srv.Log.Printf("Error: %s", err)
+	s.srv.Logf("Error: %s", err)
 	s.env = nil
 }
 
