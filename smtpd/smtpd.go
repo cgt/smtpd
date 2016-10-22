@@ -83,6 +83,8 @@ func (srv *Server) ListenAndServe(ctx context.Context) error {
 	return srv.Serve(ctx, ln)
 }
 
+// Listen listens on the TCP network address srv.Addr,
+// but does not call Serve.
 func (srv *Server) Listen() (net.Listener, error) {
 	addr := srv.Addr
 	if addr == "" {
@@ -91,9 +93,14 @@ func (srv *Server) Listen() (net.Listener, error) {
 	return net.Listen("tcp", addr)
 }
 
+// Serve handles incoming SMTP connections on the provided listener.
+// Serve blocks until the context is cancelled and all connections
+// have been gracefully shut down.
+// Returns a non-nil error if a fatal accept error occurs.
 func (srv *Server) Serve(ctx context.Context, ln net.Listener) error {
 	defer ln.Close()
 	conns := make(chan net.Conn)
+	acceptErr := make(chan error)
 	go func() {
 		for {
 			c, err := ln.Accept()
@@ -103,6 +110,7 @@ func (srv *Server) Serve(ctx context.Context, ln net.Listener) error {
 					continue
 				}
 				srv.Logf("smtpd: Fatal accept error: %v", err)
+				acceptErr <- err
 				break
 			}
 			conns <- c
@@ -117,6 +125,8 @@ func (srv *Server) Serve(ctx context.Context, ln net.Listener) error {
 		select {
 		case <-ctx.Done():
 			stop = true
+		case <-acceptErr:
+			stop = true
 		case c := <-conns:
 			wg.Add(1)
 			go func() {
@@ -129,9 +139,11 @@ func (srv *Server) Serve(ctx context.Context, ln net.Listener) error {
 	return nil
 }
 
+// Logf calls Printf on srv.Log with the provided arguments
+// if srv.Log is not nil.
 func (srv *Server) Logf(format string, v ...interface{}) {
 	if srv.Log != nil {
-		srv.Logf(format, v)
+		srv.Log.Printf(format, v)
 	}
 }
 
