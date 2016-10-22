@@ -1,6 +1,10 @@
 package smtpd
 
-import "strings"
+import (
+	"bytes"
+	"strings"
+	"time"
+)
 
 type MailAddress string
 
@@ -23,12 +27,38 @@ type Envelope struct {
 	Data       []byte
 }
 
-// TODO: Add Received and Return-Path headers
-
-func (e *Envelope) AddReceivedHeader(serverHostname string, client Client) {
-	panic("not implemented")
-}
-
 func (e *Envelope) AddRecipient(rcpt MailAddress) {
 	e.Recipients = append(e.Recipients, rcpt)
+}
+
+func (e *Envelope) AddReceivedHeader(serverHostname string) {
+	var buf bytes.Buffer
+
+	buf.WriteString("Received: from ")
+	buf.WriteString(e.Client.HeloHost)
+	buf.WriteString(" [")
+	buf.WriteString(e.Client.Addr().String())
+	buf.WriteString("]\r\n")
+	buf.WriteString("\tby ")
+	buf.WriteString(serverHostname)
+	buf.WriteString(" (spamrake) with ")
+
+	if e.Client.HeloType == "HELO" {
+		buf.WriteString("SMTP")
+	} else if e.Client.HeloType == "EHLO" {
+		buf.WriteString("ESMTP")
+	} else {
+		panic("Unknown HeloType " + e.Client.HeloType)
+	}
+	buf.WriteString("\r\n")
+
+	buf.WriteString("\tfor <")
+	buf.WriteString(e.Recipients[0].Email())
+	buf.WriteString(">; ")
+	buf.WriteString(time.Now().Format(time.RFC1123Z))
+	buf.WriteString("\r\n")
+
+	buf.Write(e.Data)
+
+	e.Data = buf.Bytes()
 }
