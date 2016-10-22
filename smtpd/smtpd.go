@@ -30,8 +30,6 @@ type Server struct {
 	WriteTimeout  time.Duration // optional write timeout
 	PregreetDelay time.Duration
 
-	PlainAuth bool // advertise plain auth (assumes you're on SSL)
-
 	// OnNewConnection, if non-nil, is called on new connections.
 	// If it returns non-nil, the connection is closed.
 	OnNewConnection func(c Connection) error
@@ -306,9 +304,6 @@ func (s *session) handleEHLO(host string) {
 	s.client.HeloHost = host
 	fmt.Fprintf(s.bw, "250-%s\r\n", s.srv.hostname())
 	extensions := []string{}
-	if s.srv.PlainAuth {
-		extensions = append(extensions, "250-AUTH PLAIN")
-	}
 	extensions = append(extensions, "250-PIPELINING",
 		"250-SIZE 10240000",
 		"250-ENHANCEDSTATUSCODES",
