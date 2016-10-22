@@ -23,6 +23,8 @@ type Envelope struct {
 	Data       []byte
 }
 
+// TODO: Add Received and Return-Path headers
+
 func (e *Envelope) AddReceivedHeader(serverHostname string, client Client) {
 	panic("not implemented")
 }
