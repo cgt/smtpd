@@ -431,6 +431,7 @@ func (s *session) handleData() {
 	}
 	s.env.Data = buf
 
+	s.env.AddReceivedHeader(s.srv.hostname())
 	err := s.srv.Deliver(s.env)
 	if err != nil {
 		// TODO: perm or temp err?
