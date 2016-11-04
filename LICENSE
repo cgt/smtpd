@@ -24,7 +24,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 -----------------------------------------------------------------
 
-Package smtpd adapted from Brad Fitzpatrick's go-smtpd
+Adapted from Brad Fitzpatrick's go-smtpd
 <https://github.com/bradfitz/go-smtpd> (license follows).
 
 Copyright (c) 2011 Google, Inc. All rights reserved.
