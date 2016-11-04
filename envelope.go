@@ -41,7 +41,7 @@ func (e *Envelope) AddReceivedHeader(serverHostname string) {
 	buf.WriteString("]\r\n")
 	buf.WriteString("\tby ")
 	buf.WriteString(serverHostname)
-	buf.WriteString(" (spamrake) with ")
+	buf.WriteString(" (smtpd) with ")
 
 	if e.Client.HeloType == "HELO" {
 		buf.WriteString("SMTP")
