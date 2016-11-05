@@ -434,8 +434,7 @@ func (s *session) handleData() {
 	s.env.AddReceivedHeader(s.srv.hostname())
 	err := s.srv.Deliver(s.env)
 	if err != nil {
-		// TODO: perm or temp err?
-		s.sendlinef("450 5.7.1 Service unavailable") // FIXME: 450 5.7.1 is nonsense
+		s.sendSMTPErrorOrLinef(err, "450 4.3.0 Service unavailable")
 	} else {
 		s.sendlinef("250 2.0.0 Ok: queued")
 	}
