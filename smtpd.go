@@ -98,6 +98,7 @@ func (srv *Server) Listen() (net.Listener, error) {
 // have been gracefully shut down.
 // Returns a non-nil error if a fatal accept error occurs.
 func (srv *Server) Serve(ctx context.Context, ln net.Listener) error {
+	srv.Logf("Listening on %v", ln.Addr())
 	defer ln.Close()
 	conns := make(chan net.Conn)
 	acceptErr := make(chan error)
