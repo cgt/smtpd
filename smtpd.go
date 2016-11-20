@@ -360,12 +360,8 @@ func (s *session) handleMailFrom(email string) {
 	cb := s.srv.OnMailFrom
 	if cb != nil {
 		if err := cb(s, MailAddress(email)); err != nil {
-			s.srv.Logf("rejecting MAIL FROM %q: %v", email, err)
-			s.sendf("451 denied\r\n") // TODO: temp or perm err? configurable?
-
-			s.bw.Flush()
-			time.Sleep(100 * time.Millisecond)
-			s.rwc.Close()
+			s.sendSMTPErrorOrLinef(err, "550 5.0.0 unacceptable sender")
+			s.srv.Logf("rejected sender %s: %v", email, err)
 			return
 		}
 	}
@@ -396,8 +392,8 @@ func (s *session) handleRcpt(line cmdLine) {
 	cb := s.srv.OnRcptTo
 	if cb != nil {
 		if err := cb(s, rcpt); err != nil {
-			s.srv.Logf("rejected rcpt %s: %v", rcpt.Email(), err)
-			s.sendlinef("550 5.7.1 unacceptable recipient")
+			s.sendSMTPErrorOrLinef(err, "550 5.0.0 unacceptable recipient")
+			s.srv.Logf("rejected recipient %s: %v", rcpt.Email(), err)
 			return
 		}
 	}
