@@ -38,12 +38,23 @@ type Server struct {
 	OnNewConnection func(c Connection) error
 
 	// OnMailFrom, if non-nil, is called on MAIL FROM.
-	// If it returns non-nil, the MAIL FROM is rejected.
+	// If the callback returns an SMTPError, the MAIL FROM address is not added
+	// to the envelope, and the SMTPError is sent to the client as reply to
+	// MAIL FROM.
+	// If the callback returns a non-nil value that is not an SMTPError,
+	// the address is also not added to the envelope, and the server replies
+	// with "550 5.0.0 unacceptable sender" (permanent error).
 	OnMailFrom func(c Connection, from MailAddress) error
 
 	// OnRcptTo, if non-nil, is called on RCPT TO.
 	// If it returns non-nil, the recipient is not rejected and not added
 	// to the Envelope.
+	// If the callback returns an SMTPError, the RCPT TO address is not added
+	// to the envelope, and the SMTPError is sent to the client as reply to
+	// MAIL FROM.
+	// If the callback returns a non-nil value that is not an SMTPError,
+	// the address is also not added to the envelope, and the server replies
+	// with "550 5.0.0 unacceptable sender" (permanent error).
 	OnRcptTo func(c Connection, rcpt MailAddress) error
 
 	// Deliver is called when DATA is finished and the mail is ready to be
@@ -483,6 +494,11 @@ func (cl cmdLine) String() string {
 	return string(cl)
 }
 
+// SMTPReply is a string to be sent to a client as an SMTP reply.
+// E.g. "550 5.7.1 IP address blacklisted".
+// SMTPReply is meant to be used as a return value in the callback functions
+// in Server (e.g. OnMailFrom) that return an error.
+// Bad things will happen if an SMTPError is not an SMTP error reply.
 type SMTPError string
 
 func (e SMTPError) Error() string {
