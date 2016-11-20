@@ -106,10 +106,10 @@ func (srv *Server) Serve(ctx context.Context, ln net.Listener) error {
 			c, err := ln.Accept()
 			if err != nil {
 				if ne, ok := err.(net.Error); ok && ne.Temporary() {
-					srv.Logf("smtpd: Accept error: %v", err)
+					srv.Logf("Accept error: %v", err)
 					continue
 				}
-				srv.Logf("smtpd: Fatal accept error: %v", err)
+				srv.Logf("Fatal accept error: %v", err)
 				acceptErr <- err
 				break
 			}
@@ -143,7 +143,7 @@ func (srv *Server) Serve(ctx context.Context, ln net.Listener) error {
 // if srv.Log is not nil.
 func (srv *Server) Logf(format string, v ...interface{}) {
 	if srv.Log != nil {
-		srv.Log.Printf(format, v)
+		srv.Log.Printf("smtpd: "+format, v)
 	}
 }
 
@@ -396,7 +396,7 @@ func (s *session) handleRcpt(line cmdLine) {
 	cb := s.srv.OnRcptTo
 	if cb != nil {
 		if err := cb(s, rcpt); err != nil {
-			s.srv.Logf("smtpd: rejected rcpt %s: %v", rcpt.Email(), err)
+			s.srv.Logf("rejected rcpt %s: %v", rcpt.Email(), err)
 			s.sendlinef("550 5.7.1 unacceptable recipient")
 			return
 		}
@@ -432,7 +432,7 @@ func (s *session) handleData() {
 	s.env.AddReceivedHeader(s.srv.hostname())
 	err := s.srv.Deliver(s.env)
 	if err != nil {
-		s.srv.Logf("smtpd: delivery error: %v", err)
+		s.srv.Logf("delivery error: %v", err)
 		s.sendSMTPErrorOrLinef(err, "450 4.3.0 Service unavailable")
 	} else {
 		s.sendlinef("250 2.0.0 Ok: queued")
