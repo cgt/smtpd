@@ -162,9 +162,10 @@ func (srv *Server) Logf(format string, v ...interface{}) {
 // TODO: flags on client (e.g., pregreeted)
 
 type Client struct {
-	HeloType string
-	HeloHost string
-	addr     net.Addr
+	HeloType   string
+	HeloHost   string
+	Pregreeted bool
+	addr       net.Addr
 }
 
 func (c Client) Addr() net.Addr {
@@ -266,6 +267,9 @@ func (s *session) serve(ctx context.Context) {
 	var preline string
 	if s.srv.PregreetDelay != 0 {
 		preline = s.pregreetCheck()
+		if preline != "" {
+			s.client.Pregreeted = true
+		}
 	}
 
 	s.sendlinef("220 %s ESMTP", s.srv.hostname())
