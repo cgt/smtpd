@@ -197,6 +197,11 @@ func (s *session) errorf(format string, args ...interface{}) {
 	s.srv.Logf("Client error: "+format, args...)
 }
 
+// Logf logs a message prefixed with the client IP address.
+func (s *session) Logf(format string, v ...interface{}) {
+	s.srv.Log.Printf("[%s] "+format, s.Addr(), v)
+}
+
 func (s *session) sendf(format string, args ...interface{}) {
 	if s.srv.WriteTimeout != 0 {
 		s.rwc.SetWriteDeadline(time.Now().Add(s.srv.WriteTimeout))
@@ -222,7 +227,8 @@ func (s *session) Addr() net.Addr {
 }
 
 // pregreetCheck checks whether the client speaks before the full 220 greeting
-// has been sent.
+// has been sent. If the client pregreets, returns a non-empty string
+// containing the line the client sent. Otherwise returns empty string.
 func (s *session) pregreetCheck() (line string) {
 	s.sendlinef("220-Wait")
 
@@ -250,7 +256,7 @@ func (s *session) pregreetCheck() (line string) {
 
 	if len(buf) != 0 {
 		line := string(buf)
-		s.srv.Logf("Client pregreeted with %#v", line)
+		s.Logf("Client pregreeted with %#v", line)
 		return line
 	}
 	return ""
@@ -324,7 +330,7 @@ func (s *session) serve(ctx context.Context) {
 			arg := line.Arg() // "From:<foo@bar.com>"
 			m := mailFromRE.FindStringSubmatch(arg)
 			if m == nil {
-				s.srv.Logf("invalid MAIL arg: %q", arg)
+				s.Logf("invalid MAIL arg: %q", arg)
 				s.sendlinef("501 5.1.7 Bad sender address syntax")
 				continue
 			}
@@ -334,7 +340,7 @@ func (s *session) serve(ctx context.Context) {
 		case "DATA":
 			s.handleData()
 		default:
-			s.srv.Logf("Client: %q, verhb: %q", line, line.Verb())
+			s.Logf("Client: %q, verhb: %q", line, line.Verb()) // TODO: ??
 			s.sendlinef("502 5.5.2 Error: command not recognized")
 		}
 	}
@@ -372,13 +378,13 @@ func (s *session) handleMailFrom(email string) {
 		s.sendlinef("503 5.5.1 Error: nested MAIL command")
 		return
 	}
-	s.srv.Logf("mail from: %q", email)
+	s.Logf("mail from: %q", email)
 
 	cb := s.srv.OnMailFrom
 	if cb != nil {
 		if err := cb(s, MailAddress(email)); err != nil {
 			s.sendSMTPErrorOrLinef(err, "550 5.0.0 unacceptable sender")
-			s.srv.Logf("rejected sender %s: %v", email, err)
+			s.Logf("rejected sender %s: %v", email, err)
 			return
 		}
 	}
@@ -400,7 +406,7 @@ func (s *session) handleRcpt(line cmdLine) {
 	arg := line.Arg() // "To:<foo@bar.com>"
 	m := rcptToRE.FindStringSubmatch(arg)
 	if m == nil {
-		s.srv.Logf("bad RCPT address: %q", arg)
+		s.Logf("bad RCPT address: %q", arg)
 		s.sendlinef("501 5.1.7 Bad sender address syntax")
 		return
 	}
@@ -410,7 +416,7 @@ func (s *session) handleRcpt(line cmdLine) {
 	if cb != nil {
 		if err := cb(s, rcpt); err != nil {
 			s.sendSMTPErrorOrLinef(err, "550 5.0.0 unacceptable recipient")
-			s.srv.Logf("rejected recipient %s: %v", rcpt.Email(), err)
+			s.Logf("rejected recipient %s: %v", rcpt.Email(), err)
 			return
 		}
 	}
@@ -445,7 +451,7 @@ func (s *session) handleData() {
 	s.env.AddReceivedHeader(s.srv.hostname())
 	err := s.srv.Deliver(s.env)
 	if err != nil {
-		s.srv.Logf("delivery error: %v", err)
+		s.Logf("delivery error: %v", err)
 		s.sendSMTPErrorOrLinef(err, "450 4.3.0 Service unavailable")
 	} else {
 		s.sendlinef("250 2.0.0 Ok: queued")
@@ -458,7 +464,7 @@ func (s *session) handleError(err error) {
 		s.sendlinef("%s", se)
 		return
 	}
-	s.srv.Logf("Error: %s", err)
+	s.Logf("Error: %s", err)
 	s.env = nil
 }
 
