@@ -142,6 +142,7 @@ func (srv *Server) Serve(ctx context.Context, ln net.Listener) error {
 		case c := <-conns:
 			wg.Add(1)
 			go func() {
+				srv.Logf("Accepted connection from %s", c.RemoteAddr())
 				srv.newSession(c).serve(ctx)
 				wg.Done()
 			}()
